@@ -83,8 +83,9 @@ Once the extension is loaded:
 > 5. **Click "Close all N tabs"** on a group to close the whole thing.
 > 6. **Duplicate tabs** are flagged with an amber "(2x)" badge. Click "Close duplicates" to keep one copy.
 > 7. **Save a tab for later** by clicking the bookmark icon before closing it. Saved tabs appear in the sidebar.
+> 8. **Configure custom groups** from the gear button in the top-right corner.
 >
-> That's it! No server to run, no config files. Everything works right away.
+> That's it! No server to run, no config file to edit. Everything works right away.
 
 ---
 

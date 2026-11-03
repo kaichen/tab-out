@@ -26,6 +26,104 @@
 // All open tabs — populated by fetchOpenTabs()
 let openTabs = [];
 
+const DEFAULT_CUSTOM_GROUPS = [{
+  key: 'grp-ai-default',
+  label: 'AI',
+  matchers: [
+    { host: 'chatgpt.com' },
+    { host: 'chat.openai.com' },
+    { host: 'claude.ai' },
+    { host: 'code.claude.com' },
+    { host: 'gemini.google.com' },
+    { host: 'kimi.com' },
+    { host: 'chat.deepseek.com' },
+    { host: 'perplexity.ai' },
+    { host: 'poe.com' },
+    { host: 'x.com', pathPrefix: '/i/grok' },
+    { host: 'chat.qwen.ai' },
+    { host: 'chatglm.cn' },
+    { host: 'yuanbao.tencent.com' },
+    { host: 'yiyan.baidu.com' },
+    { host: 'hailuo.ai' },
+    { host: 'doubao.com' },
+  ],
+}];
+
+// Hostnames that should always sit in the top priority band of the dashboard,
+// above ordinary host groups. Order here controls left-to-right order.
+const PRIORITY_HOSTS = [
+  'github.com',
+  'gist.github.com',
+  'x.com',
+  'www.youtube.com',
+  'www.bilibili.com',
+];
+
+// Code-defined "invisible" groups: not shown in Settings UI, not stored.
+// Used to aggregate docs/blog sites next to the user-facing AI chat group.
+// Matching is exact-hostname; order here controls card order within the
+// implicit band.
+const IMPLICIT_GROUPS = [
+  {
+    key: 'impl-github-docs',
+    label: 'GitHub Docs',
+    hosts: ['docs.github.com', 'github.github.com', 'github.blog'],
+  },
+  {
+    key: 'impl-openai-docs',
+    label: 'OpenAI Docs',
+    hosts: ['developers.openai.com', 'openai.com'],
+  },
+  {
+    key: 'impl-claude-docs',
+    label: 'Claude Docs',
+    hosts: ['platform.claude.com', 'claude.com', 'www.anthropic.com'],
+  },
+  {
+    key: 'impl-feishu',
+    label: 'Feishu',
+    hostEndsWith: ['.feishu.cn'],
+  },
+  {
+    key: 'impl-search',
+    label: 'Search',
+    hosts: [
+      'www.google.com',
+      'www.bing.com',
+      'www.baidu.com',
+      'duckduckgo.com',
+      'search.brave.com',
+      'kagi.com',
+      'www.ecosia.org',
+      'search.yahoo.com',
+    ],
+  },
+];
+
+function matchImplicitGroup(url) {
+  try {
+    const host = new URL(url).hostname;
+    for (const g of IMPLICIT_GROUPS) {
+      if (g.hosts && g.hosts.includes(host)) return g;
+      if (g.hostEndsWith && g.hostEndsWith.some(suf => host.endsWith(suf))) return g;
+    }
+    return null;
+  } catch { return null; }
+}
+
+const LANDING_PAGE_PATTERNS = [
+  { hostname: 'mail.google.com', test: (p, h) =>
+      !h.includes('#inbox/') && !h.includes('#sent/') && !h.includes('#search/') },
+  { hostname: 'x.com',               pathExact: ['/home'] },
+  { hostname: 'www.linkedin.com',    pathExact: ['/'] },
+  { hostname: 'github.com',          pathExact: ['/'] },
+  { hostname: 'www.youtube.com',     pathExact: ['/'] },
+];
+
+let customGroups = [];
+let settingsDraft = [];
+let expandedSettingsGroups = new Set();
+
 /**
  * fetchOpenTabs()
  *
@@ -45,6 +143,7 @@ async function fetchOpenTabs() {
       title:    t.title,
       windowId: t.windowId,
       active:   t.active,
+      pinned:   t.pinned === true,
       // Flag Tab Out's own pages so we can detect duplicate new tabs
       isTabOut: t.url === newtabUrl || t.url === 'chrome://newtab/',
     }));
@@ -283,6 +382,84 @@ async function dismissSavedTab(id) {
   }
 }
 
+function cloneCustomGroups(groups) {
+  return (groups || []).map(group => ({
+    key: group.key,
+    label: group.label || '',
+    matchers: (group.matchers || []).map(matcher => ({
+      ...(matcher.host ? { host: matcher.host } : {}),
+      ...(matcher.hostEndsWith ? { hostEndsWith: matcher.hostEndsWith } : {}),
+      ...(matcher.pathPrefix ? { pathPrefix: matcher.pathPrefix } : {}),
+    })),
+  }));
+}
+
+async function loadCustomGroups() {
+  const stored = await chrome.storage.local.get('customGroups');
+  const storedGroups = stored.customGroups;
+
+  if (!Object.prototype.hasOwnProperty.call(stored, 'customGroups') || !Array.isArray(storedGroups)) {
+    customGroups = cloneCustomGroups(DEFAULT_CUSTOM_GROUPS);
+    await chrome.storage.local.set({ customGroups });
+    return;
+  }
+
+  customGroups = cloneCustomGroups(storedGroups);
+}
+
+function matchCustomGroup(url) {
+  try {
+    const parsed = new URL(url);
+    for (const group of customGroups) {
+      for (const matcher of group.matchers || []) {
+        const hostOk = matcher.host
+          ? parsed.hostname === matcher.host
+          : matcher.hostEndsWith
+            ? parsed.hostname.endsWith(matcher.hostEndsWith)
+            : false;
+        if (!hostOk) continue;
+        if (matcher.pathPrefix && !parsed.pathname.startsWith(matcher.pathPrefix)) continue;
+        return group;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isLandingPage(url) {
+  try {
+    const parsed = new URL(url);
+    return LANDING_PAGE_PATTERNS.some(pattern => {
+      const hostnameMatch = pattern.hostname
+        ? parsed.hostname === pattern.hostname
+        : pattern.hostnameEndsWith
+          ? parsed.hostname.endsWith(pattern.hostnameEndsWith)
+          : false;
+      if (!hostnameMatch) return false;
+      if (pattern.test) return pattern.test(parsed.pathname, url);
+      if (pattern.pathPrefix) return parsed.pathname.startsWith(pattern.pathPrefix);
+      if (pattern.pathExact) return pattern.pathExact.includes(parsed.pathname);
+      return parsed.pathname === '/';
+    });
+  } catch {
+    return false;
+  }
+}
+
+function normalizeMatcherHost(value) {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.replace(/^www\./, '');
+  } catch {
+    return trimmed;
+  }
+}
+
 
 /* ----------------------------------------------------------------
    UI HELPERS
@@ -440,6 +617,102 @@ function showToast(message) {
   document.getElementById('toastText').textContent = message;
   toast.classList.add('visible');
   setTimeout(() => toast.classList.remove('visible'), 2500);
+}
+
+function escapeHtml(value) {
+  return (value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function getDraftGroup(groupKey) {
+  return settingsDraft.find(group => group.key === groupKey) || null;
+}
+
+function renderSettingsModal() {
+  const list = document.getElementById('settings-groups-list');
+  if (!list) return;
+
+  list.innerHTML = settingsDraft.map(group => {
+    const expanded = expandedSettingsGroups.has(group.key);
+    const matcherRows = (group.matchers || []).map((matcher, index) => `
+      <div class="matcher-row">
+        <input
+          type="text"
+          class="matcher-input matcher-host-input"
+          placeholder="Host"
+          value="${escapeHtml(matcher.host || matcher.hostEndsWith || '')}"
+          data-group-key="${group.key}"
+          data-matcher-index="${index}"
+          data-field="host"
+        >
+        <input
+          type="text"
+          class="matcher-input"
+          placeholder="Path prefix"
+          value="${escapeHtml(matcher.pathPrefix || '')}"
+          data-group-key="${group.key}"
+          data-matcher-index="${index}"
+          data-field="pathPrefix"
+        >
+        <button
+          class="settings-delete"
+          data-action="delete-matcher"
+          data-group-key="${group.key}"
+          data-matcher-index="${index}"
+          type="button"
+        >Delete</button>
+      </div>
+    `).join('');
+
+    return `
+      <div class="settings-group">
+        <div class="group-row ${expanded ? 'expanded' : ''}" data-action="toggle-group" data-group-key="${group.key}">
+          <div class="group-main">
+            <button class="group-toggle" type="button" aria-label="${expanded ? 'Collapse group' : 'Expand group'}">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+              </svg>
+            </button>
+            <input
+              type="text"
+              class="group-label-input"
+              value="${escapeHtml(group.label || '')}"
+              placeholder="Group label"
+              data-group-key="${group.key}"
+              data-field="label"
+            >
+          </div>
+          <button class="settings-delete" data-action="delete-group" data-group-key="${group.key}" type="button">Delete</button>
+        </div>
+        <div class="group-matchers ${expanded ? '' : 'hidden'}">
+          ${matcherRows}
+          <button class="settings-add-matcher" data-action="add-matcher" data-group-key="${group.key}" type="button">+ Add matcher</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  if (!modal) return;
+
+  settingsDraft = cloneCustomGroups(customGroups);
+  expandedSettingsGroups = new Set(settingsDraft.map(group => group.key));
+  renderSettingsModal();
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  if (!modal) return;
+
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden', 'true');
 }
 
 /**
@@ -804,6 +1077,7 @@ function renderDomainCard(group) {
   const tabs      = group.tabs || [];
   const tabCount  = tabs.length;
   const isLanding = group.domain === '__landing-pages__';
+  const isPinned  = group.domain === '__pinned__';
   const stableId  = 'domain-' + group.domain.replace(/[^a-z0-9]/g, '-');
 
   // Count duplicates (exact URL match)
@@ -882,7 +1156,7 @@ function renderDomainCard(group) {
       <div class="status-bar"></div>
       <div class="mission-content">
         <div class="mission-top">
-          <span class="mission-name">${isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
+          <span class="mission-name">${isPinned ? 'Pinned' : isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
           ${tabBadge}
           ${dupeBadge}
         </div>
@@ -1031,75 +1305,47 @@ async function renderStaticDashboard() {
   const realTabs = getRealTabs();
 
   // --- Group tabs by domain ---
-  // Landing pages (Gmail inbox, Twitter home, etc.) get their own special group
-  // so they can be closed together without affecting content tabs on the same domain.
-  const LANDING_PAGE_PATTERNS = [
-    { hostname: 'mail.google.com', test: (p, h) =>
-        !h.includes('#inbox/') && !h.includes('#sent/') && !h.includes('#search/') },
-    { hostname: 'x.com',               pathExact: ['/home'] },
-    { hostname: 'www.linkedin.com',    pathExact: ['/'] },
-    { hostname: 'github.com',          pathExact: ['/'] },
-    { hostname: 'www.youtube.com',     pathExact: ['/'] },
-    // Merge personal patterns from config.local.js (if it exists)
-    ...(typeof LOCAL_LANDING_PAGE_PATTERNS !== 'undefined' ? LOCAL_LANDING_PAGE_PATTERNS : []),
-  ];
-
-  function isLandingPage(url) {
-    try {
-      const parsed = new URL(url);
-      return LANDING_PAGE_PATTERNS.some(p => {
-        // Support both exact hostname and suffix matching (for wildcard subdomains)
-        const hostnameMatch = p.hostname
-          ? parsed.hostname === p.hostname
-          : p.hostnameEndsWith
-            ? parsed.hostname.endsWith(p.hostnameEndsWith)
-            : false;
-        if (!hostnameMatch) return false;
-        if (p.test)       return p.test(parsed.pathname, url);
-        if (p.pathPrefix) return parsed.pathname.startsWith(p.pathPrefix);
-        if (p.pathExact)  return p.pathExact.includes(parsed.pathname);
-        return parsed.pathname === '/';
-      });
-    } catch { return false; }
-  }
-
   domainGroups = [];
-  const groupMap    = {};
+  const groupMap = {};
   const landingTabs = [];
-
-  // Custom group rules from config.local.js (if any)
-  const customGroups = typeof LOCAL_CUSTOM_GROUPS !== 'undefined' ? LOCAL_CUSTOM_GROUPS : [];
-
-  // Check if a URL matches a custom group rule; returns the rule or null
-  function matchCustomGroup(url) {
-    try {
-      const parsed = new URL(url);
-      return customGroups.find(r => {
-        const hostMatch = r.hostname
-          ? parsed.hostname === r.hostname
-          : r.hostnameEndsWith
-            ? parsed.hostname.endsWith(r.hostnameEndsWith)
-            : false;
-        if (!hostMatch) return false;
-        if (r.pathPrefix) return parsed.pathname.startsWith(r.pathPrefix);
-        return true; // hostname matched, no path filter
-      }) || null;
-    } catch { return null; }
-  }
+  const pinnedTabs = [];
 
   for (const tab of realTabs) {
     try {
+      // Pinned tabs get their own group with highest priority,
+      // overriding landing/custom/host classification.
+      if (tab.pinned) {
+        pinnedTabs.push(tab);
+        continue;
+      }
+
       if (isLandingPage(tab.url)) {
         landingTabs.push(tab);
         continue;
       }
 
       // Check custom group rules first (e.g. merge subdomains, split by path)
-      const customRule = matchCustomGroup(tab.url);
-      if (customRule) {
-        const key = customRule.groupKey;
-        if (!groupMap[key]) groupMap[key] = { domain: key, label: customRule.groupLabel, tabs: [] };
-        groupMap[key].tabs.push(tab);
+      const group = matchCustomGroup(tab.url);
+      if (group) {
+        if (!groupMap[group.key]) {
+          groupMap[group.key] = { domain: group.key, label: group.label, tabs: [], isCustom: true };
+        }
+        groupMap[group.key].tabs.push(tab);
+        continue;
+      }
+
+      // Invisible implicit groups (docs/blogs for AI & dev platforms)
+      const implicit = matchImplicitGroup(tab.url);
+      if (implicit) {
+        if (!groupMap[implicit.key]) {
+          groupMap[implicit.key] = {
+            domain: implicit.key,
+            label: implicit.label,
+            tabs: [],
+            isImplicit: true,
+          };
+        }
+        groupMap[implicit.key].tabs.push(tab);
         continue;
       }
 
@@ -1118,40 +1364,72 @@ async function renderStaticDashboard() {
     }
   }
 
+  if (pinnedTabs.length > 0) {
+    groupMap['__pinned__'] = { domain: '__pinned__', tabs: pinnedTabs, isPinned: true };
+  }
+
   if (landingTabs.length > 0) {
     groupMap['__landing-pages__'] = { domain: '__landing-pages__', tabs: landingTabs };
   }
 
-  // Sort: landing pages first, then domains from landing page sites, then by tab count
-  // Collect exact hostnames and suffix patterns for priority sorting
-  const landingHostnames = new Set(LANDING_PAGE_PATTERNS.map(p => p.hostname).filter(Boolean));
-  const landingSuffixes = LANDING_PAGE_PATTERNS.map(p => p.hostnameEndsWith).filter(Boolean);
-  function isLandingDomain(domain) {
-    if (landingHostnames.has(domain)) return true;
-    return landingSuffixes.some(s => domain.endsWith(s));
-  }
-  domainGroups = Object.values(groupMap).sort((a, b) => {
-    const aIsLanding = a.domain === '__landing-pages__';
-    const bIsLanding = b.domain === '__landing-pages__';
-    if (aIsLanding !== bIsLanding) return aIsLanding ? -1 : 1;
+  const customGroupOrder = new Map(customGroups.map((group, index) => [group.key, index]));
+  const priorityHostOrder = new Map(PRIORITY_HOSTS.map((h, i) => [h, i]));
+  const implicitOrder = new Map(IMPLICIT_GROUPS.map((g, i) => [g.key, i]));
 
-    const aIsPriority = isLandingDomain(a.domain);
-    const bIsPriority = isLandingDomain(b.domain);
-    if (aIsPriority !== bIsPriority) return aIsPriority ? -1 : 1;
+  // Priority rank: lower value = higher on the page
+  //   0 pinned, 1 landing, 2 custom, 3 implicit, 4 priority hosts, 5 rest
+  const rankOf = (g) => {
+    if (g.domain === '__pinned__') return 0;
+    if (g.domain === '__landing-pages__') return 1;
+    if (g.isCustom === true) return 2;
+    if (g.isImplicit === true) return 3;
+    if (priorityHostOrder.has(g.domain)) return 4;
+    return 5;
+  };
+
+  domainGroups = Object.values(groupMap).sort((a, b) => {
+    const ra = rankOf(a);
+    const rb = rankOf(b);
+    if (ra !== rb) return ra - rb;
+
+    if (ra === 2) {
+      return (customGroupOrder.get(a.domain) ?? Number.MAX_SAFE_INTEGER)
+        - (customGroupOrder.get(b.domain) ?? Number.MAX_SAFE_INTEGER);
+    }
+    if (ra === 3) {
+      return implicitOrder.get(a.domain) - implicitOrder.get(b.domain);
+    }
+    if (ra === 4) {
+      return priorityHostOrder.get(a.domain) - priorityHostOrder.get(b.domain);
+    }
 
     return b.tabs.length - a.tabs.length;
   });
 
+  const priorityGroups = domainGroups.filter(g => rankOf(g) < 5);
+  const ordinaryGroups = domainGroups.filter(g => rankOf(g) === 5);
+
   // --- Render domain cards ---
-  const openTabsSection      = document.getElementById('openTabsSection');
-  const openTabsMissionsEl   = document.getElementById('openTabsMissions');
-  const openTabsSectionCount = document.getElementById('openTabsSectionCount');
-  const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
+  const openTabsSection         = document.getElementById('openTabsSection');
+  const openTabsMissionsEl      = document.getElementById('openTabsMissions');
+  const openTabsPriorityEl      = document.getElementById('openTabsPriorityMissions');
+  const openTabsDividerEl       = document.getElementById('openTabsDivider');
+  const openTabsSectionCount    = document.getElementById('openTabsSectionCount');
+  const openTabsSectionTitle    = document.getElementById('openTabsSectionTitle');
 
   if (domainGroups.length > 0 && openTabsSection) {
     if (openTabsSectionTitle) openTabsSectionTitle.textContent = 'Open tabs';
     openTabsSectionCount.innerHTML = `${domainGroups.length} domain${domainGroups.length !== 1 ? 's' : ''} &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} Close all ${realTabs.length} tabs</button>`;
-    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g)).join('');
+
+    if (openTabsPriorityEl) {
+      openTabsPriorityEl.innerHTML = priorityGroups.map(g => renderDomainCard(g)).join('');
+      openTabsPriorityEl.hidden = priorityGroups.length === 0;
+    }
+    openTabsMissionsEl.innerHTML = ordinaryGroups.map(g => renderDomainCard(g)).join('');
+    openTabsMissionsEl.hidden = ordinaryGroups.length === 0;
+    if (openTabsDividerEl) {
+      openTabsDividerEl.hidden = !(priorityGroups.length > 0 && ordinaryGroups.length > 0);
+    }
     openTabsSection.style.display = 'block';
   } else if (openTabsSection) {
     openTabsSection.style.display = 'none';
@@ -1169,6 +1447,7 @@ async function renderStaticDashboard() {
 }
 
 async function renderDashboard() {
+  await loadCustomGroups();
   await renderStaticDashboard();
 }
 
@@ -1187,6 +1466,98 @@ document.addEventListener('click', async (e) => {
   if (!actionEl) return;
 
   const action = actionEl.dataset.action;
+
+  if (action === 'open-settings') {
+    openSettingsModal();
+    return;
+  }
+
+  if (action === 'close-settings') {
+    closeSettingsModal();
+    return;
+  }
+
+  if (action === 'toggle-group') {
+    if (e.target.closest('input, .settings-delete')) return;
+    const groupKey = actionEl.dataset.groupKey;
+    if (!groupKey) return;
+    if (expandedSettingsGroups.has(groupKey)) expandedSettingsGroups.delete(groupKey);
+    else expandedSettingsGroups.add(groupKey);
+    renderSettingsModal();
+    return;
+  }
+
+  if (action === 'add-group') {
+    const newGroup = {
+      key: 'grp-' + Date.now().toString(36),
+      label: '',
+      matchers: [{ host: '', pathPrefix: '' }],
+    };
+    settingsDraft.push(newGroup);
+    expandedSettingsGroups.add(newGroup.key);
+    renderSettingsModal();
+    return;
+  }
+
+  if (action === 'delete-group') {
+    const groupKey = actionEl.dataset.groupKey;
+    if (!groupKey) return;
+    settingsDraft = settingsDraft.filter(group => group.key !== groupKey);
+    expandedSettingsGroups.delete(groupKey);
+    renderSettingsModal();
+    return;
+  }
+
+  if (action === 'add-matcher') {
+    const group = getDraftGroup(actionEl.dataset.groupKey);
+    if (!group) return;
+    group.matchers.push({ host: '', pathPrefix: '' });
+    expandedSettingsGroups.add(group.key);
+    renderSettingsModal();
+    return;
+  }
+
+  if (action === 'delete-matcher') {
+    const group = getDraftGroup(actionEl.dataset.groupKey);
+    const matcherIndex = Number(actionEl.dataset.matcherIndex);
+    if (!group || Number.isNaN(matcherIndex)) return;
+    group.matchers.splice(matcherIndex, 1);
+    renderSettingsModal();
+    return;
+  }
+
+  if (action === 'save-settings') {
+    const nextGroups = settingsDraft.map(group => ({
+      key: group.key,
+      label: (group.label || '').trim(),
+      matchers: (group.matchers || []).map(matcher => ({
+        host: (matcher.host || matcher.hostEndsWith || '').trim(),
+        ...(matcher.pathPrefix ? { pathPrefix: matcher.pathPrefix.trim() } : {}),
+      })),
+    }));
+
+    if (nextGroups.some(group => !group.label)) {
+      alert('Each group needs a label.');
+      return;
+    }
+
+    if (nextGroups.some(group => group.matchers.length === 0)) {
+      alert('Each group needs at least one matcher.');
+      return;
+    }
+
+    if (nextGroups.some(group => group.matchers.some(matcher => !matcher.host))) {
+      alert('Each matcher needs a host.');
+      return;
+    }
+
+    customGroups = cloneCustomGroups(nextGroups);
+    await chrome.storage.local.set({ customGroups });
+    closeSettingsModal();
+    await fetchOpenTabs();
+    await renderDashboard();
+    return;
+  }
 
   // ---- Close duplicate Tab Out tabs ----
   if (action === 'close-tabout-dupes') {
@@ -1349,9 +1720,12 @@ document.addEventListener('click', async (e) => {
     if (!group) return;
 
     const urls      = group.tabs.map(t => t.url);
-    // Landing pages and custom groups (whose domain key isn't a real hostname)
+    // Landing/pinned/custom/implicit groups (whose domain key isn't a real hostname)
     // must use exact URL matching to avoid closing unrelated tabs
-    const useExact  = group.domain === '__landing-pages__' || !!group.label;
+    const useExact  = group.domain === '__landing-pages__'
+                   || group.domain === '__pinned__'
+                   || group.isCustom === true
+                   || group.isImplicit === true;
 
     if (useExact) {
       await closeTabsExact(urls);
@@ -1368,7 +1742,11 @@ document.addEventListener('click', async (e) => {
     const idx = domainGroups.indexOf(group);
     if (idx !== -1) domainGroups.splice(idx, 1);
 
-    const groupLabel = group.domain === '__landing-pages__' ? 'Homepages' : (group.label || friendlyDomain(group.domain));
+    const groupLabel = group.domain === '__pinned__'
+      ? 'Pinned'
+      : group.domain === '__landing-pages__'
+        ? 'Homepages'
+        : (group.label || friendlyDomain(group.domain));
     showToast(`Closed ${urls.length} tab${urls.length !== 1 ? 's' : ''} from ${groupLabel}`);
 
     const statTabs = document.getElementById('statTabs');
@@ -1431,6 +1809,45 @@ document.addEventListener('click', async (e) => {
     showToast('All tabs closed. Fresh start.');
     return;
   }
+});
+
+document.addEventListener('input', (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLInputElement)) return;
+
+  if (target.dataset.field === 'label') {
+    const group = getDraftGroup(target.dataset.groupKey);
+    if (!group) return;
+    group.label = target.value;
+    return;
+  }
+
+  if (target.dataset.field === 'host' || target.dataset.field === 'pathPrefix') {
+    const group = getDraftGroup(target.dataset.groupKey);
+    const matcherIndex = Number(target.dataset.matcherIndex);
+    if (!group || Number.isNaN(matcherIndex) || !group.matchers[matcherIndex]) return;
+    if (target.dataset.field === 'host') {
+      delete group.matchers[matcherIndex].hostEndsWith;
+      group.matchers[matcherIndex].host = target.value;
+      return;
+    }
+    group.matchers[matcherIndex].pathPrefix = target.value;
+  }
+});
+
+document.addEventListener('focusout', (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.dataset.field !== 'host') return;
+
+  const group = getDraftGroup(target.dataset.groupKey);
+  const matcherIndex = Number(target.dataset.matcherIndex);
+  if (!group || Number.isNaN(matcherIndex) || !group.matchers[matcherIndex]) return;
+
+  const normalized = normalizeMatcherHost(target.value);
+  group.matchers[matcherIndex].host = normalized;
+  delete group.matchers[matcherIndex].hostEndsWith;
+  target.value = normalized;
 });
 
 // ---- Archive toggle — expand/collapse the archive section ----

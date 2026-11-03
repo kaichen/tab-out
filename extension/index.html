@@ -26,6 +26,14 @@
       <!-- "Friday, April 4, 2026" — written by getDateDisplay() in app.js -->
       <div class="date" id="dateDisplay"></div>
     </div>
+    <div class="header-right">
+      <button class="settings-btn" data-action="open-settings" aria-label="Settings">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.592c.55 0 1.02.398 1.11.94l.213 1.279c.066.396.33.73.69.895.314.144.657.223 1.018.223.183 0 .365-.02.543-.06l1.251-.281a1.125 1.125 0 0 1 1.216.548l1.296 2.245c.275.476.172 1.084-.244 1.44l-.997.852a1.125 1.125 0 0 0-.364 1.128c.05.243.076.494.076.75s-.026.507-.076.75a1.125 1.125 0 0 0 .364 1.128l.997.852c.416.356.52.964.244 1.44l-1.296 2.245a1.125 1.125 0 0 1-1.216.548l-1.251-.281a2.347 2.347 0 0 0-.543-.06c-.36 0-.704.08-1.018.223a1.125 1.125 0 0 0-.69.895l-.213 1.279c-.09.542-.56.94-1.11.94h-2.592c-.55 0-1.02-.398-1.11-.94l-.213-1.279a1.125 1.125 0 0 0-.69-.895 2.346 2.346 0 0 0-1.018-.223c-.183 0-.365.02-.543.06l-1.251.281a1.125 1.125 0 0 1-1.216-.548L2.98 17.69a1.125 1.125 0 0 1 .244-1.44l.997-.852a1.125 1.125 0 0 0 .364-1.128 3.88 3.88 0 0 1 0-1.5 1.125 1.125 0 0 0-.364-1.128l-.997-.852a1.125 1.125 0 0 1-.244-1.44l1.296-2.245a1.125 1.125 0 0 1 1.216-.548l1.251.281c.178.04.36.06.543.06.36 0 .704-.08 1.018-.223a1.125 1.125 0 0 0 .69-.895l.213-1.279Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+        </svg>
+      </button>
+    </div>
   </header>
 
   <!-- ================================================================
@@ -60,6 +68,10 @@
         <h2 id="openTabsSectionTitle">Right now</h2>
         <div class="section-line"></div>
         <div class="section-count" id="openTabsSectionCount"></div>
+      </div>
+      <div class="missions missions-priority" id="openTabsPriorityMissions"></div>
+      <div class="missions-divider" id="openTabsDivider" hidden>
+        <span class="missions-divider-label">Other domains</span>
       </div>
       <div class="missions" id="openTabsMissions"></div>
     </div>
@@ -113,6 +125,23 @@
 
 </div><!-- end .container -->
 
+<section id="settings-modal" class="settings-modal hidden" aria-hidden="true">
+  <div class="settings-backdrop" data-action="close-settings"></div>
+  <div class="settings-panel">
+    <header class="settings-header">
+      <h2>Custom Groups</h2>
+      <button class="settings-close" data-action="close-settings" aria-label="Close">✕</button>
+    </header>
+    <div class="settings-body" id="settings-groups-list"></div>
+    <footer class="settings-footer">
+      <button class="settings-add-group" data-action="add-group">+ Add group</button>
+      <div class="spacer"></div>
+      <button class="settings-cancel" data-action="close-settings">Cancel</button>
+      <button class="settings-save" data-action="save-settings">Save</button>
+    </footer>
+  </div>
+</section>
+
 <!-- ================================================================
      TOAST — floats above everything, used for action confirmations
      Hidden by default via CSS (opacity:0, translateY)
@@ -124,10 +153,6 @@
   </svg>
   <span id="toastText"></span>
 </div>
-
-<!-- Personal config (gitignored) — defines LOCAL_LANDING_PAGE_PATTERNS etc. -->
-<!-- If the file doesn't exist, that's fine — app.js uses sensible defaults. -->
-<script src="config.local.js" onerror="/* no personal config, that's fine */"></script>
 
 <!-- Main dashboard logic — loads last so the DOM is ready -->
 <script src="app.js"></script>
