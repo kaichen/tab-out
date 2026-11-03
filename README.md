@@ -1,6 +1,8 @@
-# Tab Out
+# Tab Out (modified fork)
 
 **Keep tabs on your tabs.**
+
+This is a modified fork of [zarazhangrui/tab-out](https://github.com/zarazhangrui/tab-out). See [Changes in this fork](#changes-in-this-fork) below for what's different.
 
 Tab Out is a Chrome extension that replaces your new tab page with a dashboard of everything you have open. Tabs are grouped by domain, with homepages (Gmail, X, LinkedIn, etc.) pulled into their own group. Close tabs with a satisfying swoosh + confetti.
 
@@ -13,7 +15,7 @@ No server. No account. No external API calls. Just a Chrome extension.
 Send your coding agent (Claude Code, Codex, etc.) this repo and say **"install this"**:
 
 ```
-https://github.com/zarazhangrui/tab-out
+https://github.com/kaichen/tab-out
 ```
 
 The agent will walk you through it. Takes about 1 minute.
@@ -35,12 +37,24 @@ The agent will walk you through it. Takes about 1 minute.
 
 ---
 
+## Changes in this fork
+
+Compared with the upstream repo ([zarazhangrui/tab-out](https://github.com/zarazhangrui/tab-out)):
+
+- **Custom groups** — aggregate any set of hosts into a single group card. Configure them through a settings modal (gear button in the top-right corner); groups are stored in `chrome.storage.local`. Seeded by default with an **AI** group that bundles 16 AI chat sites (ChatGPT, Claude, Gemini, Kimi, DeepSeek, Grok, Qwen, ChatGLM, Yuanbao, Yiyan, Hailuo, Doubao, ...) into one card.
+- **Priority band** — pinned tabs from a few key hosts (GitHub, Gist, X, YouTube, Bilibili) always sit in a top row above all other groups.
+- **Implicit groups** — code-defined groups that merge docs/search sites without cluttering the settings UI: GitHub Docs, OpenAI Docs, Claude Docs, Feishu, and Search engines.
+- **Built-in homepage patterns** — the landing-page patterns that used to live in an optional `config.local.js` are now built into `app.js`, so no personal config file is needed.
+- **Pinned tabs flagged** — Chrome-pinned tabs are marked in the dashboard.
+
+---
+
 ## Manual Setup
 
 **1. Clone the repo**
 
 ```bash
-git clone https://github.com/zarazhangrui/tab-out.git
+git clone https://github.com/kaichen/tab-out.git
 ```
 
 **2. Load the Chrome extension**
